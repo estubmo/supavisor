@@ -1,40 +1,72 @@
-version: "3"
 
+version: '3'
 services:
   db:
-    image: supabase/postgres:15.1.0.148
-    container_name: supavisor-db
+    image: 'supabase/postgres:15.1.0.148'
     ports:
-      - "6432:5432"
+      - '6432:5432'
     volumes:
-      - ./dev/postgres:/docker-entrypoint-initdb.d/
-      # Uncomment to set MD5 authentication method on unitialized databases
-      # - ./dev/postgres/md5/etc/postgresql/pg_hba.conf:/etc/postgresql/pg_hba.conf
-    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+      - './dev/postgres:/docker-entrypoint-initdb.d/'
+      -
+        type: bind
+        source: ./volumes/db/setup.sql
+        target: /docker-entrypoint-initdb.d/migrations/00-setup.sql
+        content: |
+          create role anon          nologin noinherit;
+          create role authenticated nologin noinherit;
+          create role service_role  nologin noinherit bypassrls;
+
+          grant usage on schema public to anon, authenticated, service_role;
+
+          alter default privileges in schema public grant all on tables    to anon, authenticated, service_role;
+          alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
+          alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
+
+          create schema if not exists _supavisor;
+      - type: bind
+        source: ./volumes/db/jwt.sql
+        target: /docker-entrypoint-initdb.d/init-scripts/99-jwt.sql
+        content: |
+          \set jwt_secret `echo "$JWT_SECRET"`
+          \set jwt_exp `echo "$JWT_EXP"`
+
+          ALTER DATABASE postgres SET "app.settings.jwt_secret" TO :'jwt_secret';
+          ALTER DATABASE postgres SET "app.settings.jwt_exp" TO :'jwt_exp';
+    command: 'postgres -c config_file=/etc/postgresql/postgresql.conf'
     environment:
-      POSTGRES_HOST: /var/run/postgresql
-      POSTGRES_PASSWORD: postgres
-      # Uncomment to set MD5 authentication method on unitialized databases
-      # POSTGRES_INITDB_ARGS: --auth-host=md5
+      - POSTGRES_HOST=/var/run/postgresql
+      - PGPORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - PGPASSWORD=${SERVICE_PASSWORD_POSTGRES}
+      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_POSTGRES}
+      - PGDATABASE=postgres
+      - POSTGRES_DB=postgres
+
+      - JWT_SECRET=${SERVICE_PASSWORD_JWT}
+      - JWT_EXP=${JWT_EXPIRY:-3600}
+    healthcheck:
+      test: pg_isready -U postgres -h localhost
+      interval: 5s
+      timeout: 5s
+      retries: 10
   supavisor:
     build: .
-    container_name: supavisor
     ports:
       - 4000:4000
       - 5452:5452
       - 6543:6543
     environment:
-      PORT: 4000
-      PROXY_PORT_SESSION: 5452
-      PROXY_PORT_TRANSACTION: 6543
-      DATABASE_URL: "ecto://postgres:postgres@db:5432/postgres"
-      CLUSTER_POSTGRES: "true"
-      SECRET_KEY_BASE: "12345678901234567890121234567890123456789012345678903212345678901234567890123456789032123456789012345678901234567890323456789032"
-      VAULT_ENC_KEY: "12345678901234567890123456789032"
-      API_JWT_SECRET: "dev"
-      METRICS_JWT_SECRET: "dev"
-      REGION: "local"
-      ERL_AFLAGS: -proto_dist inet_tcp
-    command:  sh -c "/app/bin/migrate && /app/bin/server"
+      - PORT=4000
+      - PROXY_PORT_SESSION=5452
+      - PROXY_PORT_TRANSACTION=6543
+      - DATABASE_URL='ecto://postgres:${SERVICE_PASSWORD_POSTGRES}@${POSTGRES_HOST}:${POSTGRES_PORT:-5432}/postgres'
+      - CLUSTER_POSTGRES=true
+      - SECRET_KEY_BASE=${SECRET_KEY_BASE}
+      - VAULT_ENC_KEY=${VAULT_ENC_KEY}
+      - API_JWT_SECRET=${JWT_SECRET}
+      - METRICS_JWT_SECRET=dev
+      - REGION=local
+      - ERL_AFLAGS='-proto_dist inet_tcp'
+    command: 'sh -c "/app/bin/migrate && /app/bin/server"'
     depends_on:
       - db
