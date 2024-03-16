@@ -7,31 +7,7 @@ services:
       - '6432:5432'
     volumes:
       - './dev/postgres:/docker-entrypoint-initdb.d/'
-      -
-        type: bind
-        source: ./volumes/db/setup.sql
-        target: /docker-entrypoint-initdb.d/migrations/00-setup.sql
-        content: |
-          create role anon          nologin noinherit;
-          create role authenticated nologin noinherit;
-          create role service_role  nologin noinherit bypassrls;
 
-          grant usage on schema public to anon, authenticated, service_role;
-
-          alter default privileges in schema public grant all on tables    to anon, authenticated, service_role;
-          alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
-          alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
-
-          create schema if not exists _supavisor;
-      - type: bind
-        source: ./volumes/db/jwt.sql
-        target: /docker-entrypoint-initdb.d/init-scripts/99-jwt.sql
-        content: |
-          \set jwt_secret `echo "$JWT_SECRET"`
-          \set jwt_exp `echo "$JWT_EXP"`
-
-          ALTER DATABASE postgres SET "app.settings.jwt_secret" TO :'jwt_secret';
-          ALTER DATABASE postgres SET "app.settings.jwt_exp" TO :'jwt_exp';
     command: 'postgres -c config_file=/etc/postgresql/postgresql.conf'
     environment:
       - POSTGRES_HOST=/var/run/postgresql
